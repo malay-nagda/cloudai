@@ -31,6 +31,7 @@ from nemo.collections.common.tokenizers.tokenizer_spec import TokenizerSpec
 from nemo.collections.llm.gpt.data.mock import MockDataModule
 from nemo.collections.llm.gpt.model.llama import Llama3Config70B, Llama31Config405B, LlamaModel
 from nemo.collections.llm.gpt.model.nemotron import Nemotron4Config15B, Nemotron4Config340B, NemotronModel
+from nemo.collections.llm.recipes.deepseek_v3 import pretrain_recipe as deepseek_v3_pretrain_recipe
 from nemo.collections.llm.recipes.nemotron3_8b import pretrain_recipe as nemotron3_8b_recipe
 from nemo.collections.llm.recipes.tp_overlap_configs.userbuffers import (
     BulkOverlapCfg,
@@ -40,9 +41,12 @@ from nemo.collections.llm.recipes.tp_overlap_configs.userbuffers import (
 )
 from nemo.collections.nlp.modules.common.tokenizer_utils import get_nmt_tokenizer
 from nemo.lightning import AutoResume, NeMoLogger
+from nemo.lightning.pytorch.callbacks.deepep import DeepEPCallback
 from nemo.lightning.pytorch.callbacks.flops_callback import FLOPsMeasurementCallback
 from nemo.lightning.pytorch.callbacks.garbage_collection import GarbageCollectionCallback
 from nemo.lightning.pytorch.callbacks.megatron_comm_overlap import MegatronCommOverlapCallback
+from nemo.lightning.pytorch.callbacks.megatron_enable_experimental_callback import MegatronEnableExperimentalCallback
+from nemo.lightning.pytorch.callbacks.moe_token_drop import MegatronTokenDropCallback
 from nemo.lightning.pytorch.callbacks.nsys import NsysCallback
 from nemo.lightning.pytorch.optim import CosineAnnealingScheduler
 from nemo.utils.exp_manager import TimingCallback
@@ -144,6 +148,17 @@ def hf_tokenizer_nemotron4_15b() -> run.Config[AutoTokenizer]:
 @run.autoconvert
 def hf_tokenizer_nemotron4_340b() -> run.Config[AutoTokenizer]:
     model_name = "nvidia/nemotron-4-340b"
+    return run.Config(
+        AutoTokenizer,
+        pretrained_model_name=model_name,
+        use_fast=True,
+    )
+
+
+@run.cli.factory
+@run.autoconvert
+def hf_tokenizer_deepseek_v3() -> run.Config[AutoTokenizer]:
+    model_name = "deepseek-ai/DeepSeek-V3"
     return run.Config(
         AutoTokenizer,
         pretrained_model_name=model_name,
@@ -1203,6 +1218,93 @@ def cloudai_nemotron4_340b_recipe() -> run.Partial:
 
     if os.getenv("CLOUDAI_GPU_TYPE") in ["b200", "gb200"] and os.getenv("CLOUDAI_GPU_DTYPE") == "fp8":
         recipe.optim.config.use_precision_aware_optimizer = False
+
+    return recipe
+
+
+# DeepSeek V3 Recipe
+@run.cli.factory(target=llm.pretrain)
+def cloudai_deepseek_v3_recipe() -> run.Partial:
+    recipe = deepseek_v3_pretrain_recipe(performance_mode=True)
+
+    # CloudAI standard adjustments
+    recipe.log = default_log()
+    recipe.data.tokenizer = null_tokenizer(vocab_size=129280)
+    recipe.model.tokenizer = recipe.data.tokenizer
+
+    recipe.trainer.callbacks.append(
+        run.Config(
+            FLOPsMeasurementCallback,
+            model_config=recipe.model.config,
+            data_config=recipe.data,
+            model_name="deepseek",
+        )
+    )
+
+    # Reset recompute-related args in the default recipe if unset
+    if getattr(recipe.model.config, "recompute_modules", None) is None:
+        recipe.model.config.recompute_granularity = None
+        recipe.model.config.recompute_method = None
+        recipe.model.config.recompute_num_layers = None
+        recipe.model.config.recompute_modules = None
+
+    # Ensure callbacks list exists
+    if not hasattr(recipe.trainer, "callbacks") or recipe.trainer.callbacks is None:
+        recipe.trainer.callbacks = []
+
+    # Token dispatcher configs
+    gpu_type = (os.getenv("CLOUDAI_GPU_TYPE") or "").lower()
+    use_token_drop = os.getenv("CLOUDAI_USE_TOKEN_DROP", "1") == "1"
+    if gpu_type in ["h100"]:
+        recipe.model.config.moe_token_dispatcher_type = "flex"
+        recipe.model.config.moe_enable_deepep = True
+        recipe.model.config.moe_shared_expert_overlap = False
+        recipe.model.config.moe_router_force_load_balancing = True
+        # Optional: DeepEP callback if applicable
+        recipe.trainer.callbacks.append(run.Config(DeepEPCallback))
+    else:
+        recipe.model.config.moe_token_dispatcher_type = "alltoall"
+        recipe.model.config.moe_enable_deepep = False
+        recipe.model.config.moe_shared_expert_overlap = True
+        if use_token_drop:
+            recipe.trainer.callbacks.append(run.Config(MegatronTokenDropCallback))
+
+    # Performance optimization knobs
+    recipe.model.config.moe_permute_fusion = True
+    recipe.model.config.apply_rope_fusion = True
+    recipe.trainer.callbacks.append(run.Config(MegatronEnableExperimentalCallback))
+
+    # Pipeline parallelism layout derived from PP and VP sizes
+    pp_size = getattr(recipe.trainer.strategy, "pipeline_model_parallel_size", None) or 1
+    vp_size = getattr(recipe.trainer.strategy, "virtual_pipeline_model_parallel_size", None) or 1
+    map_pp_vp_to_layout = {
+        (1, 1): None,
+        (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + ["loss"]],
+        (8, 1): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + ["loss"]],
+        (4, 2): [["embedding"] + ["decoder"] * 8] + [["decoder"] * 8] * 6 + [["decoder"] * 5 + ["loss"]],
+        (16, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
+        (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
+        (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder", "loss"]],
+    }
+    if (pp_size, vp_size) not in map_pp_vp_to_layout:
+        raise ValueError(
+            f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout for DeepSeek V3. "
+            f"Known PP and VP combinations: {list(map_pp_vp_to_layout.keys())}"
+        )
+    layout = map_pp_vp_to_layout[(pp_size, vp_size)]
+    if layout is not None:
+        layout = list([list(x) for x in layout])
+    recipe.trainer.strategy.pipeline_model_parallel_layout = layout
+
+    # When layout is specified, these knobs are not needed
+    recipe.trainer.strategy.account_for_embedding_in_pipeline_split = False
+    recipe.trainer.strategy.account_for_loss_in_pipeline_split = False
+    recipe.trainer.strategy.num_layers_in_first_pipeline_stage = None
+    recipe.trainer.strategy.num_layers_in_last_pipeline_stage = None
+
+    # CUDA graphs: enable only for GB200 per your gating
+    if os.getenv("CLOUDAI_GPU_TYPE") == "gb200":
+        set_enable_cuda_graphs_params(recipe)
 
     return recipe
 
