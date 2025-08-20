@@ -163,12 +163,23 @@ class NeMoRunTestDefinition(TestDefinition):
                 f"Values: num_gpus={num_gpus}, tp={tp}, pp={pp}, cp={cp}"
             )
 
-        constraint2 = True if vp is None else (num_layers // pp) % vp == 0
-        if not constraint2:
-            logging.error(
-                "Constraint 2 failed: vp is not None and (num_layers // pp) %% vp != 0. "
-                f"Values: num_layers={num_layers}, pp={pp}, vp={vp}"
-            )
+        recipe_name = self.cmd_args.recipe_name
+        if recipe_name == "cloudai_deepseek_v3_recipe":
+            allowed_pp_vp = {(1, 1), (4, 1), (8, 1), (4, 2), (16, 1), (8, 2), (4, 4)}
+            vp_value = vp if vp is not None else 1
+            constraint2 = (pp, vp_value) in allowed_pp_vp
+            if not constraint2:
+                logging.error(
+                    "Constraint 2 failed for DeepSeek V3: invalid (pp, vp) combination. "
+                    f"Values: pp={pp}, vp={vp}. Allowed: {sorted(list(allowed_pp_vp))}"
+                )
+        else:
+            constraint2 = True if vp is None else (num_layers // pp) % vp == 0
+            if not constraint2:
+                logging.error(
+                    "Constraint 2 failed: vp is not None and (num_layers // pp) %% vp != 0. "
+                    f"Values: num_layers={num_layers}, pp={pp}, vp={vp}"
+                )
 
         constraint3 = dp != 0
         if not constraint3:
