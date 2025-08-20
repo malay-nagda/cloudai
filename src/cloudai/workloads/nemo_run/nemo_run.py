@@ -72,6 +72,7 @@ class TrainerStrategy(BaseModel):
     pipeline_model_parallel_size: Union[int, List[int]] = 1
     context_parallel_size: Union[int, List[int]] = 2
     virtual_pipeline_model_parallel_size: Optional[Union[int, List[int]]] = None
+    expert_model_parallel_size: Optional[Union[int, List[int]]] = None
 
 
 class Trainer(BaseModel):
