@@ -98,6 +98,7 @@ class NeMoRunSlurmCommandGenStrategy(SlurmCommandGenStrategy):
             "cloudai_nemotron3_8b_recipe",
             "cloudai_nemotron4_15b_recipe",
             "cloudai_nemotron4_340b_recipe",
+            "cloudai_deepseek_v3_recipe",
         ]
 
         if recipe_name not in supported_recipes:
