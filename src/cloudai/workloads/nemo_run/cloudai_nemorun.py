@@ -41,7 +41,7 @@ from nemo.collections.llm.recipes.tp_overlap_configs.userbuffers import (
 )
 from nemo.collections.nlp.modules.common.tokenizer_utils import get_nmt_tokenizer
 from nemo.lightning import AutoResume, NeMoLogger
-from nemo.lightning.pytorch.callbacks.deepep import DeepEPCallback
+#from nemo.lightning.pytorch.callbacks.deepep import DeepEPCallback
 from nemo.lightning.pytorch.callbacks.flops_callback import FLOPsMeasurementCallback
 from nemo.lightning.pytorch.callbacks.garbage_collection import GarbageCollectionCallback
 from nemo.lightning.pytorch.callbacks.megatron_comm_overlap import MegatronCommOverlapCallback
@@ -1261,7 +1261,7 @@ def cloudai_deepseek_v3_recipe() -> run.Partial:
         recipe.model.config.moe_shared_expert_overlap = False
         recipe.model.config.moe_router_force_load_balancing = True
         # Optional: DeepEP callback if applicable
-        recipe.trainer.callbacks.append(run.Config(DeepEPCallback))
+        #recipe.trainer.callbacks.append(run.Config(DeepEPCallback))
     else:
         recipe.model.config.moe_token_dispatcher_type = "alltoall"
         recipe.model.config.moe_enable_deepep = False
