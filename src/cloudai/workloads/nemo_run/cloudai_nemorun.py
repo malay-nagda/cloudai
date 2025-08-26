@@ -1275,8 +1275,8 @@ def cloudai_deepseek_v3_recipe() -> run.Partial:
     recipe.trainer.callbacks.append(run.Config(MegatronEnableExperimentalCallback))
 
     # Pipeline parallelism layout derived from PP and VP sizes
-    pp_size = getattr(recipe.trainer.strategy, "pipeline_model_parallel_size", None) or 1
-    vp_size = getattr(recipe.trainer.strategy, "virtual_pipeline_model_parallel_size", None) or 1
+    pp_size = int(os.getenv("CLOUDAI_INTERNAL_PP_SIZE", "1"))
+    vp_size = int(os.getenv("CLOUDAI_INTERNAL_VP_SIZE", "1"))
     map_pp_vp_to_layout = {
         (1, 1): None,
         (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + ["loss"]],

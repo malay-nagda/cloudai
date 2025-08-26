@@ -49,6 +49,21 @@ class NeMoRunSlurmCommandGenStrategy(SlurmCommandGenStrategy):
             logging.debug("Setting NCCL_P2P_NET_CHUNKSIZE to 2097152 as pipeline_model_parallel_size is greater than 1")
             self.final_env_vars["NCCL_P2P_NET_CHUNKSIZE"] = "2097152"
 
+        # Set internal PP/VP sizes for DeepSeek V3 recipe
+        if tdef.cmd_args.recipe_name == "cloudai_deepseek_v3_recipe":
+            vp_size = tdef.cmd_args.trainer.strategy.virtual_pipeline_model_parallel_size
+            if isinstance(vp_size, list):
+                vp_size = vp_size[0]
+            if vp_size is None:
+                vp_size_int = 1
+            else:
+                try:
+                    vp_size_int = int(vp_size)
+                except (TypeError, ValueError):
+                    vp_size_int = 1
+            self.final_env_vars["CLOUDAI_INTERNAL_PP_SIZE"] = str(pipeline_model_parallel_size)
+            self.final_env_vars["CLOUDAI_INTERNAL_VP_SIZE"] = str(vp_size_int)
+
         enable_fsdp = self.final_env_vars.get("CLOUDAI_ENABLE_FSDP", "0")
         if enable_fsdp == "1":
             logging.info(
