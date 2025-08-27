@@ -1314,7 +1314,7 @@ def cloudai_deepseek_v3_recipe() -> run.Partial:
 # Qwen3 30B Recipe
 @run.cli.factory(target=llm.pretrain)
 def cloudai_qwen3_30b_a3b_recipe() -> run.Partial:
-    recipe = qwen3_30b_a3b_pretrain_recipe(performance_mode=True)
+    recipe = qwen3_30b_a3b_pretrain_recipe()
 
     # CloudAI adjustments using upstream performance settings
     recipe.log = default_log()
