@@ -1242,14 +1242,14 @@ def cloudai_deepseek_v3_recipe() -> run.Partial:
             model_name="deepseek",
         )
     )
-
-    # Reset recompute-related args in the default recipe if unset
-    if getattr(recipe.model.config, "recompute_modules", None) is None:
+    
+    recompute_env = os.getenv("CLOUDAI_RECOMPUTE_LAYERS", "0")
+    if recompute_env == "0":
         recipe.model.config.recompute_granularity = None
         recipe.model.config.recompute_method = None
         recipe.model.config.recompute_num_layers = None
         recipe.model.config.recompute_modules = None
-
+    
     # Ensure callbacks list exists
     if not hasattr(recipe.trainer, "callbacks") or recipe.trainer.callbacks is None:
         recipe.trainer.callbacks = []
