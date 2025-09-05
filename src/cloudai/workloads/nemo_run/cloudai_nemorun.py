@@ -1306,8 +1306,7 @@ def cloudai_deepseek_v3_recipe() -> run.Partial:
     recipe.trainer.strategy.account_for_loss_in_pipeline_split = False
     recipe.trainer.strategy.num_layers_in_first_pipeline_stage = None
     recipe.trainer.strategy.num_layers_in_last_pipeline_stage = None
-    recipe.trainer.strategy.virtual_pipeline_model_parallel_size = None
-
+    
     # CUDA graphs: enable only for GB200 per your gating
     if os.getenv("CLOUDAI_GPU_TYPE") == "gb200":
         set_enable_cuda_graphs_params(recipe)
